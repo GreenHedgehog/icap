@@ -76,14 +76,13 @@ func (c *conn) close() {
 // Serve a new connection.
 func (c *conn) serve() {
 	defer func() {
+		c.server.untrackConn(c)
 		if err := recover(); err != nil {
 			// var buf bytes.Buffer
 			// fmt.Fprintf(&buf, "icap: panic serving %v: %v\n", c.remoteAddr, err)
 			// buf.Write(debug.Stack())
 			// log.Print(buf.String())
 		}
-		c.server.untrackConn(c)
-		c.close()
 	}()
 
 	w, err := c.readRequest()
@@ -94,6 +93,8 @@ func (c *conn) serve() {
 
 	c.handler.ServeICAP(w, w.req)
 	w.finishRequest()
+
+	c.close()
 }
 
 // A Server defines parameters for running an ICAP server.
@@ -126,9 +127,8 @@ func (srv *Server) ListenAndServe() error {
 // then call srv.Handler to reply to them.
 func (srv *Server) Serve(l net.Listener) error {
 	defer l.Close()
-	handler := srv.Handler
-	if handler == nil {
-		handler = DefaultServeMux
+	if srv.Handler == nil {
+		srv.Handler = DefaultServeMux
 	}
 
 	srv.startTracking()
@@ -147,7 +147,6 @@ func (srv *Server) Serve(l net.Listener) error {
 			return e
 		}
 
-		// c := newConn(rw, handler)
 		c := srv.newConn(rw)
 		srv.trackConn(c)
 		go c.serve()
