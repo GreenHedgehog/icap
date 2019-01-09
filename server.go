@@ -8,7 +8,7 @@ package icap
 
 import (
 	"bufio"
-	"github.com/pkg/errors"
+	"errors"
 	"net"
 	"net/http"
 	"sync"
