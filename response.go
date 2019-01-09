@@ -120,7 +120,7 @@ func (w *respWriter) WriteHeader(code int, httpMessage interface{}, hasBody bool
 	if status == "" {
 		status = fmt.Sprintf("status code %d", code)
 	}
-	fmt.Fprintf(bw, "ICAP/1.0 %d %s\r\n", code, status)
+	// fmt.Fprintf(bw, "ICAP/1.0 %d %s\r\n", code, status)
 	w.header.Write(bw)
 	io.WriteString(bw, "\r\n")
 
@@ -168,7 +168,7 @@ func httpRequestHeader(req *http.Request) (hdr []byte, err error) {
 
 	uri := req.URL.String()
 
-	fmt.Fprintf(buf, "%s %s %s\r\n", valueOrDefault(req.Method, "GET"), uri, valueOrDefault(req.Proto, "HTTP/1.1"))
+	// fmt.Fprintf(buf, "%s %s %s\r\n", valueOrDefault(req.Method, "GET"), uri, valueOrDefault(req.Proto, "HTTP/1.1"))
 	req.Header.WriteSubset(buf, map[string]bool{
 		"Transfer-Encoding": true,
 		"Content-Length":    true,
@@ -195,7 +195,7 @@ func httpResponseHeader(resp *http.Response) (hdr []byte, err error) {
 	if proto == "" {
 		proto = "HTTP/1.1"
 	}
-	fmt.Fprintf(buf, "%s %d %s\r\n", proto, resp.StatusCode, text)
+	// fmt.Fprintf(buf, "%s %d %s\r\n", proto, resp.StatusCode, text)
 	resp.Header.WriteSubset(buf, map[string]bool{
 		"Transfer-Encoding": true,
 		"Content-Length":    true,

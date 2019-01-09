@@ -8,13 +8,11 @@ package icap
 
 import (
 	"bufio"
-	"bytes"
-	"fmt"
-	"log"
+	"github.com/pkg/errors"
 	"net"
 	"net/http"
-	"runtime/debug"
-	"time"
+	"sync"
+	"sync/atomic"
 )
 
 // Objects implementing the Handler interface can be registered
@@ -43,19 +41,8 @@ type conn struct {
 	handler    Handler           // request handler
 	rwc        net.Conn          // i/o connection
 	buf        *bufio.ReadWriter // buffered rwc
-}
 
-// Create new connection from rwc.
-func newConn(rwc net.Conn, handler Handler) (c *conn, err error) {
-	c = new(conn)
-	c.remoteAddr = rwc.RemoteAddr().String()
-	c.handler = handler
-	c.rwc = rwc
-	br := bufio.NewReader(rwc)
-	bw := bufio.NewWriter(rwc)
-	c.buf = bufio.NewReadWriter(br, bw)
-
-	return c, nil
+	server *Server
 }
 
 // Read next request from connection.
@@ -89,37 +76,34 @@ func (c *conn) close() {
 // Serve a new connection.
 func (c *conn) serve() {
 	defer func() {
-		err := recover()
-		if err == nil {
-			return
+		if err := recover(); err != nil {
+			// var buf bytes.Buffer
+			// fmt.Fprintf(&buf, "icap: panic serving %v: %v\n", c.remoteAddr, err)
+			// buf.Write(debug.Stack())
+			// log.Print(buf.String())
 		}
-		c.rwc.Close()
-
-		var buf bytes.Buffer
-		fmt.Fprintf(&buf, "icap: panic serving %v: %v\n", c.remoteAddr, err)
-		buf.Write(debug.Stack())
-		log.Print(buf.String())
+		c.server.untrackConn(c)
+		c.close()
 	}()
 
 	w, err := c.readRequest()
 	if err != nil {
-		log.Println("error while reading request:", err)
-		c.rwc.Close()
+		// log.Println("error while reading request:", err)
 		return
 	}
 
 	c.handler.ServeICAP(w, w.req)
 	w.finishRequest()
-
-	c.close()
 }
 
 // A Server defines parameters for running an ICAP server.
 type Server struct {
-	Addr         string  // TCP address to listen on, ":1344" if empty
-	Handler      Handler // handler to invoke
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
+	Addr    string  // TCP address to listen on, ":1344" if empty
+	Handler Handler // handler to invoke
+
+	isClosed   int32
+	mu         sync.Mutex
+	activeConn map[*conn]struct{}
 }
 
 // ListenAndServe listens on the TCP network address srv.Addr and then
@@ -147,28 +131,28 @@ func (srv *Server) Serve(l net.Listener) error {
 		handler = DefaultServeMux
 	}
 
+	srv.startTracking()
+
 	for {
+		if atomic.LoadInt32(&srv.isClosed) == 1 {
+			return ErrServerClosed
+		}
+
 		rw, e := l.Accept()
 		if e != nil {
 			if ne, ok := e.(net.Error); ok && ne.Temporary() {
-				log.Printf("icap: Accept error: %v", e)
+				// log.Printf("icap: Accept error: %v", e)
 				continue
 			}
 			return e
 		}
-		if srv.ReadTimeout != 0 {
-			rw.SetReadDeadline(time.Now().Add(srv.ReadTimeout))
-		}
-		if srv.WriteTimeout != 0 {
-			rw.SetWriteDeadline(time.Now().Add(srv.WriteTimeout))
-		}
-		c, err := newConn(rw, handler)
-		if err != nil {
-			continue
-		}
+
+		// c := newConn(rw, handler)
+		c := srv.newConn(rw)
+		srv.trackConn(c)
 		go c.serve()
 	}
-	panic("not reached")
+
 }
 
 // Serve accepts incoming ICAP connections on the listener l,
@@ -185,4 +169,44 @@ func Serve(l net.Listener, handler Handler) error {
 func ListenAndServe(addr string, handler Handler) error {
 	server := &Server{Addr: addr, Handler: handler}
 	return server.ListenAndServe()
+}
+
+/**
+		NEW PART
+**/
+
+var ErrServerClosed = errors.New("icap: Server closed")
+
+func (srv *Server) Close() {
+	atomic.StoreInt32(&srv.isClosed, 1)
+	for c := range srv.activeConn {
+		c.close()
+		delete(srv.activeConn, c)
+	}
+}
+
+func (srv *Server) startTracking() {
+	srv.activeConn = make(map[*conn]struct{})
+}
+
+func (srv *Server) trackConn(c *conn) {
+	srv.mu.Lock()
+	srv.activeConn[c] = struct{}{}
+	srv.mu.Unlock()
+}
+
+func (srv *Server) untrackConn(c *conn) {
+	srv.mu.Lock()
+	delete(srv.activeConn, c)
+	srv.mu.Unlock()
+}
+
+func (srv *Server) newConn(rwc net.Conn) *conn {
+	return &conn{
+		server:     srv,
+		rwc:        rwc,
+		handler:    srv.Handler,
+		buf:        bufio.NewReadWriter(bufio.NewReader(rwc), bufio.NewWriter(rwc)),
+		remoteAddr: rwc.RemoteAddr().String(),
+	}
 }
