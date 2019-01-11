@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"net"
 	"testing"
+	"time"
 )
 
 const serverAddr = "localhost:11344"
@@ -68,6 +69,25 @@ func TestREQMOD2(t *testing.T) {
 
 	response := string(respBuffer)
 	checkString("Response", response, resp, t)
+}
+
+func TestServer_Close(t *testing.T) {
+
+	srv := Server{}
+
+	go func() {
+		time.Sleep(time.Second)
+
+		err := srv.Close()
+		if err != nil {
+			t.Fatalf("unexpected error in closing server: %v", err)
+		}
+	}()
+
+	err := srv.ListenAndServe()
+	if err != nil && err != ErrServerClosed {
+		t.Fatalf("unexpected error in serving: %v", err)
+	}
 }
 
 func HandleREQMOD2(w ResponseWriter, req *Request) {

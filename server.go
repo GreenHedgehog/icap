@@ -104,6 +104,7 @@ type Server struct {
 
 	isClosed   int32
 	mu         sync.Mutex
+	listener   *net.Listener
 	activeConn map[*conn]struct{}
 }
 
@@ -131,15 +132,16 @@ func (srv *Server) Serve(l net.Listener) error {
 		srv.Handler = DefaultServeMux
 	}
 
+	srv.listener = &l
 	srv.startTracking()
 
 	for {
-		if atomic.LoadInt32(&srv.isClosed) == 1 {
-			return ErrServerClosed
-		}
-
 		rw, e := l.Accept()
 		if e != nil {
+			if atomic.LoadInt32(&srv.isClosed) == 1 {
+				return ErrServerClosed
+			}
+
 			if ne, ok := e.(net.Error); ok && ne.Temporary() {
 				// log.Printf("icap: Accept error: %v", e)
 				continue
@@ -176,12 +178,14 @@ func ListenAndServe(addr string, handler Handler) error {
 
 var ErrServerClosed = errors.New("icap: Server closed")
 
-func (srv *Server) Close() {
+func (srv *Server) Close() error {
 	atomic.StoreInt32(&srv.isClosed, 1)
 	for c := range srv.activeConn {
 		c.close()
 		delete(srv.activeConn, c)
 	}
+
+	return (*srv.listener).Close()
 }
 
 func (srv *Server) startTracking() {
